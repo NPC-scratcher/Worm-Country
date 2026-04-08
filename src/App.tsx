@@ -5,8 +5,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette, Globe } from 'lucide-react';
-import { db } from './firebase';
+import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette, Globe, Server } from 'lucide-react';
+import { getDbForServer, servers } from './firebase';
 import { collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 
 // --- Constants & Types ---
@@ -102,6 +102,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : { glow: true, showNames: true };
   });
   
+  const [selectedServer, setSelectedServer] = useState(() => {
+    return localStorage.getItem('worm_server') || 'server1';
+  });
   const [gameMode, setGameMode] = useState<'practice' | 'online'>('practice');
   const [score, setScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<{ name: string; score: number }[]>([]);
@@ -158,9 +161,13 @@ export default function App() {
 
     snakesRef.current = bots;
     foodRef.current = food;
-    // Fetch Global Leaderboard on mount
+  }, []);
+
+  // Fetch Global Leaderboard
+  useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
+        const db = getDbForServer(selectedServer);
         const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
         const snapshot = await getDocs(q);
         const topScores = snapshot.docs.map(doc => ({
@@ -172,8 +179,11 @@ export default function App() {
         console.error("Error fetching leaderboard:", error);
       }
     };
-    fetchLeaderboard();
-  }, []);
+    
+    if (gameState === 'menu') {
+      fetchLeaderboard();
+    }
+  }, [selectedServer, gameState]);
 
   const initGame = useCallback(() => {
     const player: Snake = {
@@ -441,6 +451,7 @@ export default function App() {
               setGameState('gameover');
               // Save score to Firebase if playing online
               if (gameMode === 'online' && snake.score > 100) {
+                const db = getDbForServer(selectedServer);
                 addDoc(collection(db, 'leaderboard'), {
                   name: snake.name,
                   score: snake.score,
@@ -660,6 +671,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('worm_player_color', playerColor);
   }, [playerColor]);
+
+  useEffect(() => {
+    localStorage.setItem('worm_server', selectedServer);
+  }, [selectedServer]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1070,6 +1085,28 @@ export default function App() {
                   WORM<span className="text-blue-500">COUNTRY</span>
                 </h1>
               </motion.div>
+
+              {/* Server Selection */}
+              <div className="w-full mb-6">
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest text-center mb-3 flex items-center justify-center gap-2">
+                  <Server className="w-4 h-4" /> Select Server
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {servers.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => setSelectedServer(s.id)}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                        selectedServer === s.id 
+                          ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' 
+                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Play Buttons */}
               <div className="w-full flex flex-col gap-3 mb-4">
