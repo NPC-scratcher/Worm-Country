@@ -9,11 +9,11 @@ import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartph
 
 // --- Constants & Types ---
 
-const WORLD_SIZE = 6000;
+const WORLD_SIZE = 15000;
 const INITIAL_SNAKE_LENGTH = 10;
 const SEGMENT_DISTANCE = 15;
-const FOOD_COUNT = 800;
-const BOT_COUNT = 35;
+const FOOD_COUNT = 3000;
+const BOT_COUNT = 100;
 const VIEW_DISTANCE = 800;
 
 interface Point {
@@ -78,14 +78,27 @@ const getDistanceSq = (p1: Point, p2: Point) => {
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [gameState, setGameState] = useState<'device_selection' | 'menu' | 'playing' | 'gameover'>('device_selection');
+  
+  // State Initialization with localStorage
+  const [gameState, setGameState] = useState<'device_selection' | 'menu' | 'playing' | 'gameover'>(() => {
+    const savedDevice = localStorage.getItem('worm_device');
+    return savedDevice ? 'menu' : 'device_selection';
+  });
+  const [isMobile, setIsMobile] = useState(() => {
+    return localStorage.getItem('worm_device') === 'mobile';
+  });
+  const [playerName, setPlayerName] = useState(() => {
+    return localStorage.getItem('worm_player_name') || 'Player';
+  });
+  const [settings, setSettings] = useState(() => {
+    const saved = localStorage.getItem('worm_settings');
+    return saved ? JSON.parse(saved) : { glow: true, showNames: true };
+  });
+  
   const [score, setScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<{ name: string; score: number }[]>([]);
   const [tick, setTick] = useState(0);
-  const [isMobile, setIsMobile] = useState(false);
-  const [playerName, setPlayerName] = useState('Player');
   const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState({ glow: true, showNames: true });
   
   // Game Refs (to avoid re-renders during game loop)
   const previousBotNames = useRef<Set<string>>(new Set());
@@ -562,6 +575,15 @@ export default function App() {
 
   // --- Effects ---
 
+  // Save settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('worm_settings', JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    localStorage.setItem('worm_player_name', playerName);
+  }, [playerName]);
+
   useEffect(() => {
     const handleResize = () => {
       dimensionsRef.current = { width: window.innerWidth, height: window.innerHeight };
@@ -785,6 +807,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setIsMobile(false);
+                    localStorage.setItem('worm_device', 'pc');
                     setGameState('menu');
                   }}
                   className="group relative bg-slate-900 border border-slate-700 hover:border-blue-500 p-10 rounded-3xl transition-all hover:scale-105 shadow-2xl flex flex-col items-center gap-6"
@@ -798,6 +821,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setIsMobile(true);
+                    localStorage.setItem('worm_device', 'mobile');
                     setGameState('menu');
                   }}
                   className="group relative bg-slate-900 border border-slate-700 hover:border-blue-500 p-10 rounded-3xl transition-all hover:scale-105 shadow-2xl flex flex-col items-center gap-6"
@@ -950,8 +974,7 @@ export default function App() {
                 <div className="mb-6 inline-flex p-5 bg-red-500/10 rounded-full border border-red-500/20 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
                   <RefreshCw className="w-12 h-12 text-red-500" />
                 </div>
-                <h2 className="text-6xl font-black text-white mb-2 tracking-tighter drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]">ELIMINATED</h2>
-                <p className="text-red-400/80 mb-10 uppercase tracking-[0.3em] font-bold text-xs">Connection Lost</p>
+                <h2 className="text-6xl font-black text-white mb-10 tracking-tighter drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]">ELIMINATED</h2>
                 
                 <div className="bg-slate-900/80 border border-slate-700 p-8 rounded-3xl mb-8 shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-50" />
