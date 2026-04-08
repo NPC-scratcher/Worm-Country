@@ -9,11 +9,11 @@ import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartph
 
 // --- Constants & Types ---
 
-const WORLD_SIZE = 15000;
+const WORLD_SIZE = 5000;
 const INITIAL_SNAKE_LENGTH = 10;
 const SEGMENT_DISTANCE = 15;
-const FOOD_COUNT = 3000;
-const BOT_COUNT = 100;
+const FOOD_COUNT = 1000;
+const BOT_COUNT = 19; // 1 Player + 19 Bots = 20 Players per server
 const VIEW_DISTANCE = 800;
 
 interface Point {
@@ -145,8 +145,8 @@ export default function App() {
         score: 0,
         isBot: true,
         isDead: false,
-        reactionTime: Math.floor(Math.random() * 15) + 10, // 10 to 24 frames reaction delay
-        frameCount: Math.floor(Math.random() * 30)
+        reactionTime: Math.floor(Math.random() * 30) + 20, // 20 to 50 frames reaction delay (slower)
+        frameCount: Math.floor(Math.random() * 50)
       };
     });
 
@@ -223,7 +223,7 @@ export default function App() {
             // Optimization: Only check head and a few segments, use squared distance
             for (let i = 0; i < Math.min(other.segments.length, 10); i += 3) {
               const seg = other.segments[i];
-              if (getDistanceSq(head, seg) < 10000) { // 100 squared
+              if (getDistanceSq(head, seg) < 22500) { // 150 squared (increased vision)
                 nearThreat = true;
                 avoidanceDx += head.x - seg.x;
                 avoidanceDy += head.y - seg.y;
@@ -231,8 +231,9 @@ export default function App() {
             }
           });
 
-          if (nearThreat) {
-            targetAngle = Math.atan2(avoidanceDy, avoidanceDx);
+          // 20% chance to completely ignore the threat (makes them make mistakes)
+          if (nearThreat && Math.random() > 0.2) {
+            targetAngle = Math.atan2(avoidanceDy, avoidanceDx) + (Math.random() - 0.5) * 0.5; // Imperfect turn
             speed = 5; // Boost away
           } else {
             // 3. Seek food
@@ -248,7 +249,7 @@ export default function App() {
             });
 
             if (closestFood) {
-              targetAngle = Math.atan2(closestFood.y - head.y, closestFood.x - head.x);
+              targetAngle = Math.atan2(closestFood.y - head.y, closestFood.x - head.x) + (Math.random() - 0.5) * 0.2; // Imperfect aim
             } else if (Math.random() < 0.1) {
               targetAngle += (Math.random() - 0.5);
             }
@@ -1010,10 +1011,9 @@ export default function App() {
                 animate={{ y: 0, opacity: 1 }}
                 className="mb-12 text-center"
               >
-                <h1 className="text-7xl font-black text-white tracking-tighter italic leading-none drop-shadow-2xl">
+                <h1 className="text-7xl font-black text-white tracking-tighter italic leading-none drop-shadow-2xl mb-8">
                   WORM<span className="text-blue-500">COUNTRY</span>
                 </h1>
-                <p className="text-slate-400 font-medium mt-2 tracking-widest uppercase text-xs">The Ultimate Arena</p>
               </motion.div>
 
               {/* Play Button */}
