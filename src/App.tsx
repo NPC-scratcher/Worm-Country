@@ -32,6 +32,8 @@ interface Snake {
   score: number;
   isBot: boolean;
   isDead: boolean;
+  reactionTime?: number;
+  frameCount?: number;
 }
 
 interface Food {
@@ -141,7 +143,9 @@ export default function App() {
         color: getRandomColor(),
         score: 0,
         isBot: true,
-        isDead: false
+        isDead: false,
+        reactionTime: Math.floor(Math.random() * 15) + 10, // 10 to 24 frames reaction delay
+        frameCount: Math.floor(Math.random() * 30)
       };
     });
 
@@ -193,15 +197,21 @@ export default function App() {
       if (snake.isBot) {
         const head = snake.segments[0];
         let targetAngle = snake.targetAngle;
-        let speed = 2 + Math.random();
+        let speed = snake.speed;
         
-        // 1. Avoid boundaries (Highest priority)
+        snake.frameCount = (snake.frameCount || 0) + 1;
+        const reactionTime = snake.reactionTime || 15;
+        
+        // 1. Avoid boundaries (Highest priority, instant reaction)
         const margin = 150;
         if (head.x < margin) targetAngle = 0;
         else if (head.x > WORLD_SIZE - margin) targetAngle = Math.PI;
         else if (head.y < margin) targetAngle = Math.PI / 2;
         else if (head.y > WORLD_SIZE - margin) targetAngle = -Math.PI / 2;
-        else {
+        else if (snake.frameCount % reactionTime === 0) {
+          // Only think every X frames (simulates reaction time)
+          speed = 2 + Math.random(); // Reset speed
+          
           // 2. Avoid other snakes
           let avoidanceDx = 0;
           let avoidanceDy = 0;
@@ -238,7 +248,7 @@ export default function App() {
 
             if (closestFood) {
               targetAngle = Math.atan2(closestFood.y - head.y, closestFood.x - head.x);
-            } else if (Math.random() < 0.05) {
+            } else if (Math.random() < 0.1) {
               targetAngle += (Math.random() - 0.5);
             }
           }
