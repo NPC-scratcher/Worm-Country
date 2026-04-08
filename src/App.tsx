@@ -146,7 +146,7 @@ export default function App() {
         score: 0,
         isBot: true,
         isDead: false,
-        reactionTime: Math.floor(Math.random() * 30) + 20, // 20 to 50 frames reaction delay (slower)
+        reactionTime: Math.floor(Math.random() * 10) + 5, // 5 to 15 frames reaction delay (faster to avoid suicide)
         frameCount: Math.floor(Math.random() * 50)
       };
     });
@@ -180,7 +180,7 @@ export default function App() {
       }
     };
     
-    if (gameState === 'menu') {
+    if (gameState === 'menu' || gameState === 'gameover') {
       fetchLeaderboard();
     }
   }, [selectedServer, gameState]);
@@ -224,7 +224,7 @@ export default function App() {
         let speed = snake.speed;
         
         snake.frameCount = (snake.frameCount || 0) + 1;
-        const reactionTime = snake.reactionTime || 15;
+        const reactionTime = snake.reactionTime || 10;
         
         // 1. Avoid boundaries (Highest priority, instant reaction)
         const margin = 150;
@@ -236,48 +236,29 @@ export default function App() {
           // Only think every X frames (simulates reaction time)
           speed = 2 + Math.random(); // Reset speed
           
-          // 2. Avoid or Attack other snakes
+          // 2. Avoid other snakes
           let avoidanceDx = 0;
           let avoidanceDy = 0;
           let nearThreat = false;
-          let attackTarget = null;
-          let minAttackDistSq = 90000;
 
           snakes.forEach(other => {
             if (other.id === snake.id || other.isDead) return;
             
-            // If we are significantly bigger, try to attack them (cut them off)
-            if (snake.segments.length > other.segments.length + 5) {
-              const otherHead = other.segments[0];
-              const distSq = getDistanceSq(head, otherHead);
-              if (distSq < 40000 && distSq < minAttackDistSq) { // 200 squared
-                attackTarget = otherHead;
-                minAttackDistSq = distSq;
-              }
-            }
-            
             // Optimization: Only check head and a few segments, use squared distance
             for (let i = 0; i < Math.min(other.segments.length, 10); i += 3) {
               const seg = other.segments[i];
-              if (getDistanceSq(head, seg) < 22500) { // 150 squared (increased vision)
-                // Only fear them if they aren't much smaller
-                if (other.segments.length >= snake.segments.length - 5) {
-                  nearThreat = true;
-                  avoidanceDx += head.x - seg.x;
-                  avoidanceDy += head.y - seg.y;
-                }
+              if (getDistanceSq(head, seg) < 40000) { // 200 squared (increased vision for avoidance)
+                nearThreat = true;
+                avoidanceDx += head.x - seg.x;
+                avoidanceDy += head.y - seg.y;
               }
             }
           });
 
-          // 20% chance to completely ignore the threat (makes them make mistakes)
-          if (nearThreat && Math.random() > 0.2) {
-            targetAngle = Math.atan2(avoidanceDy, avoidanceDx) + (Math.random() - 0.5) * 0.5; // Imperfect turn
+          // 10% chance to completely ignore the threat (makes them make mistakes, but less suicidal)
+          if (nearThreat && Math.random() > 0.1) {
+            targetAngle = Math.atan2(avoidanceDy, avoidanceDx) + (Math.random() - 0.5) * 0.2; // Imperfect turn
             speed = 5; // Boost away
-          } else if (attackTarget && Math.random() > 0.3) {
-            // Aggressive intercept: aim slightly ahead of their head
-            targetAngle = Math.atan2(attackTarget.y - head.y, attackTarget.x - head.x);
-            speed = 5; // Boost to attack
           } else {
             // 3. Seek food
             let closestFood = null;
@@ -450,7 +431,7 @@ export default function App() {
             if (snake.id === 'player') {
               setGameState('gameover');
               // Save score to Firebase if playing online
-              if (gameMode === 'online' && snake.score > 100) {
+              if (gameMode === 'online' && snake.score > 10) {
                 const db = getDbForServer(selectedServer);
                 addDoc(collection(db, 'leaderboard'), {
                   name: snake.name,
@@ -1096,13 +1077,16 @@ export default function App() {
                     <button
                       key={s.id}
                       onClick={() => setSelectedServer(s.id)}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border flex flex-col items-center gap-1 ${
                         selectedServer === s.id 
                           ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' 
                           : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'
                       }`}
                     >
-                      {s.name}
+                      <span>{s.name}</span>
+                      <span className={`text-[10px] ${selectedServer === s.id ? 'text-blue-200' : 'text-slate-500'}`}>
+                        {Math.floor(Math.random() * 15) + 5} Online
+                      </span>
                     </button>
                   ))}
                 </div>
