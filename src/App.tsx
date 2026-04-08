@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X } from 'lucide-react';
+import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette } from 'lucide-react';
 
 // --- Constants & Types ---
 
@@ -104,6 +104,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<{ name: string; score: number }[]>([]);
   const [tick, setTick] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCustomization, setShowCustomization] = useState(false);
   
   // Game Refs (to avoid re-renders during game loop)
   const previousBotNames = useRef<Set<string>>(new Set());
@@ -466,7 +467,7 @@ export default function App() {
     );
     ctx.shadowBlur = 0;
 
-    // Draw Food
+    // Draw Food (Optimized: no gradients)
     foodRef.current.forEach(f => {
       const dx = f.x - cameraX;
       const dy = f.y - cameraY;
@@ -474,15 +475,15 @@ export default function App() {
         const screenX = dx + width / 2;
         const screenY = dy + height / 2;
 
-        // Glow effect
-        const grad = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, f.size * 3);
-        grad.addColorStop(0, f.color);
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
+        // Simple glow
+        ctx.fillStyle = f.color;
+        ctx.globalAlpha = 0.3;
         ctx.beginPath();
-        ctx.arc(screenX, screenY, f.size * 3, 0, Math.PI * 2);
+        ctx.arc(screenX, screenY, f.size * 2.5, 0, Math.PI * 2);
         ctx.fill();
 
+        // Core
+        ctx.globalAlpha = 1.0;
         ctx.fillStyle = '#fff';
         ctx.beginPath();
         ctx.arc(screenX, screenY, f.size, 0, Math.PI * 2);
@@ -538,17 +539,15 @@ export default function App() {
           ctx.stroke();
           ctx.globalAlpha = 1.0;
 
-          // Speed boost glow
-          if (i === 0 && snake.speed > 4 && settings.glow) {
+          // Speed boost trail (instead of a single large sphere)
+          if (snake.speed > 4 && settings.glow && i < 8) {
+            const auraSize = size * (1 + (8 - i) * 0.15);
             ctx.beginPath();
-            ctx.arc(screenX, screenY, size * 1.5, 0, Math.PI * 2);
+            ctx.arc(screenX, screenY, auraSize, 0, Math.PI * 2);
             ctx.fillStyle = snake.color;
-            ctx.globalAlpha = 0.5;
-            ctx.shadowBlur = 40;
-            ctx.shadowColor = snake.color;
+            ctx.globalAlpha = 0.15 * (1 - i / 8);
             ctx.fill();
             ctx.globalAlpha = 1.0;
-            ctx.shadowBlur = 0;
           }
 
           // Eyes for the head
@@ -864,6 +863,63 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Customization Modal */}
+      <AnimatePresence>
+        {showCustomization && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-2xl max-w-sm w-full relative"
+            >
+              <button 
+                onClick={() => setShowCustomization(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              
+              <h2 className="text-2xl font-black text-white mb-6 flex items-center gap-2">
+                <Palette className="w-6 h-6" /> CUSTOMIZE
+              </h2>
+              
+              <div className="space-y-6">
+                <div>
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Player Name</p>
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value.slice(0, 15))}
+                    placeholder="Enter your name..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white font-bold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                  />
+                </div>
+                
+                <div>
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">Worm Color</p>
+                  <div className="flex flex-wrap gap-3">
+                    {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#ffffff'].map(color => (
+                      <button
+                        key={color}
+                        onClick={() => setPlayerColor(color)}
+                        className={`w-10 h-10 rounded-full transition-all ${playerColor === color ? 'scale-110 ring-2 ring-white shadow-[0_0_15px_rgba(255,255,255,0.5)]' : 'hover:scale-110 opacity-70 hover:opacity-100'}`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
@@ -960,31 +1016,6 @@ export default function App() {
                 <p className="text-slate-400 font-medium mt-2 tracking-widest uppercase text-xs">The Ultimate Arena</p>
               </motion.div>
 
-              {/* Player Name Input & Customization */}
-              <div className="w-full mb-8">
-                <input
-                  type="text"
-                  value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value.slice(0, 15))}
-                  placeholder="Enter your name..."
-                  className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl px-6 py-4 text-white text-center font-bold text-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 transition-all shadow-inner mb-4"
-                />
-                
-                <div className="bg-slate-900/50 border border-slate-700 rounded-2xl p-4">
-                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest text-center mb-3">Worm Color</p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#ffffff'].map(color => (
-                      <button
-                        key={color}
-                        onClick={() => setPlayerColor(color)}
-                        className={`w-8 h-8 rounded-full transition-all ${playerColor === color ? 'scale-125 ring-2 ring-white shadow-[0_0_15px_rgba(255,255,255,0.5)]' : 'hover:scale-110 opacity-70 hover:opacity-100'}`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
               {/* Play Button */}
               <motion.button
                 whileHover={{ scale: 1.05 }}
@@ -999,14 +1030,23 @@ export default function App() {
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
               </motion.button>
 
-              {/* Settings Button */}
-              <button
-                onClick={() => setShowSettings(true)}
-                className="w-full py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-full font-bold text-sm transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
-              >
-                <Settings className="w-4 h-4" />
-                Settings
-              </button>
+              {/* Menu Buttons */}
+              <div className="grid grid-cols-2 gap-4 w-full">
+                <button
+                  onClick={() => setShowCustomization(true)}
+                  className="py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
+                >
+                  <Palette className="w-4 h-4" />
+                  Customize
+                </button>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
+                >
+                  <Settings className="w-4 h-4" />
+                  Settings
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
