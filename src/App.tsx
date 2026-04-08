@@ -5,9 +5,10 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette, Globe, Server } from 'lucide-react';
+import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette, Globe, Server, Volume2, VolumeX } from 'lucide-react';
 import { getDbForServer, servers } from './firebase';
 import { collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { io, Socket } from 'socket.io-client';
 
 // --- Constants & Types ---
 
@@ -112,8 +113,14 @@ export default function App() {
   const [tick, setTick] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [showCustomization, setShowCustomization] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    return localStorage.getItem('worm_muted') === 'true';
+  });
   
   // Game Refs (to avoid re-renders during game loop)
+  const socketRef = useRef<Socket | null>(null);
+  const onlinePlayersRef = useRef<Snake[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousBotNames = useRef<Set<string>>(new Set());
   const playerRef = useRef<Snake | null>(null);
   const snakesRef = useRef<Snake[]>([]);
@@ -185,9 +192,41 @@ export default function App() {
     }
   }, [selectedServer, gameState]);
 
+  // Audio Setup
+  useEffect(() => {
+    audioRef.current = new Audio('https://actions.google.com/sounds/v1/science_fiction/cybernetic_rhythm.ogg');
+    audioRef.current.loop = true;
+    audioRef.current.volume = 0.3;
+    
+    if (!isMuted && gameState === 'playing') {
+      audioRef.current.play().catch(e => console.log("Audio play prevented:", e));
+    } else {
+      audioRef.current.pause();
+    }
+    
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, [gameState, isMuted]);
+
+  // Socket.io Setup
+  useEffect(() => {
+    socketRef.current = io();
+    
+    socketRef.current.on('state', (serverPlayers: Snake[]) => {
+      onlinePlayersRef.current = serverPlayers;
+    });
+
+    return () => {
+      if (socketRef.current) socketRef.current.disconnect();
+    };
+  }, []);
+
   const initGame = useCallback(() => {
     const player: Snake = {
-      id: 'player',
+      id: socketRef.current?.id || 'player',
       name: playerName || 'Player',
       segments: Array.from({ length: INITIAL_SNAKE_LENGTH }, (_, i) => ({
         x: WORLD_SIZE / 2,
@@ -203,10 +242,17 @@ export default function App() {
     };
 
     playerRef.current = player;
-    snakesRef.current = [player, ...snakesRef.current.filter(s => s.id !== 'player')];
+    
+    // If online, remove bots to make room for real players
+    if (gameMode === 'online') {
+      snakesRef.current = [player]; // Start with just the player, others come from socket
+    } else {
+      snakesRef.current = [player, ...snakesRef.current.filter(s => s.id !== 'player')];
+    }
+    
     setScore(0);
     setGameState('playing');
-  }, []);
+  }, [playerName, playerColor, gameMode]);
 
   // --- Game Loop Logic ---
 
@@ -402,11 +448,15 @@ export default function App() {
     });
 
     // 3. Snake Collision
+    const collisionSnakes = gameMode === 'online' 
+      ? [...snakes, ...onlinePlayersRef.current.filter(p => p.id !== playerRef.current?.id)] 
+      : snakes;
+
     snakes.forEach(snake => {
       if (snake.isDead) return;
       const head = snake.segments[0];
 
-      snakes.forEach(other => {
+      collisionSnakes.forEach(other => {
         if (other.isDead) return;
         
         other.segments.forEach((seg, idx) => {
@@ -447,7 +497,17 @@ export default function App() {
 
     // Update Leaderboard & UI (Throttled)
     if (frameIdRef.current % 10 === 0) {
-      const topSnakes = [...snakes]
+      // If online, send state to server
+      if (gameMode === 'online' && playerRef.current && !playerRef.current.isDead) {
+        socketRef.current?.emit('update', playerRef.current);
+      }
+
+      // Combine local snakes and online players for leaderboard
+      const allSnakes = gameMode === 'online' 
+        ? [...snakes, ...onlinePlayersRef.current.filter(p => p.id !== playerRef.current?.id)] 
+        : snakes;
+
+      const topSnakes = allSnakes
         .filter(s => !s.isDead)
         .sort((a, b) => b.score - a.score)
         .slice(0, 10)
@@ -457,7 +517,7 @@ export default function App() {
       // Force a re-render for the minimap and other non-state HUD elements
       setTick(t => t + 1);
     }
-  }, []);
+  }, [gameMode, selectedServer]);
 
   // --- Rendering ---
 
@@ -535,8 +595,13 @@ export default function App() {
       }
     });
 
+    // Combine local snakes and online players
+    const allSnakes = gameMode === 'online' 
+      ? [...snakesRef.current, ...onlinePlayersRef.current.filter(p => p.id !== playerRef.current?.id)] 
+      : snakesRef.current;
+
     // Draw Snakes
-    snakesRef.current.forEach(snake => {
+    allSnakes.forEach(snake => {
       if (snake.isDead) return;
 
       // Draw segments from tail to head for proper layering
@@ -658,6 +723,10 @@ export default function App() {
   }, [selectedServer]);
 
   useEffect(() => {
+    localStorage.setItem('worm_muted', isMuted.toString());
+  }, [isMuted]);
+
+  useEffect(() => {
     const handleResize = () => {
       dimensionsRef.current = { width: window.innerWidth, height: window.innerHeight };
       if (canvasRef.current) {
@@ -746,11 +815,11 @@ export default function App() {
               }}
             />
           )}
-          {/* Bot Dots */}
-          {snakesRef.current.filter(s => s.isBot && !s.isDead).map(s => (
+          {/* Bot / Online Player Dots */}
+          {(gameMode === 'online' ? onlinePlayersRef.current : snakesRef.current).filter(s => s.id !== 'player' && !s.isDead).map(s => (
             <div 
               key={s.id}
-              className="absolute w-1 h-1 bg-slate-500 rounded-full"
+              className={`absolute w-1 h-1 rounded-full ${gameMode === 'online' ? 'bg-green-400' : 'bg-slate-500'}`}
               style={{ 
                 left: `${(s.segments[0].x / WORLD_SIZE) * 100}%`, 
                 top: `${(s.segments[0].y / WORLD_SIZE) * 100}%`,
@@ -844,8 +913,14 @@ export default function App() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="absolute top-6 right-6 z-10"
+              className="absolute top-6 right-6 z-10 flex flex-col items-end gap-4"
             >
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                className="bg-slate-900/80 backdrop-blur-md border border-slate-700 p-3 rounded-2xl shadow-2xl text-slate-400 hover:text-white transition-colors"
+              >
+                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              </button>
               <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700 p-4 rounded-2xl shadow-2xl w-64">
                 <div className="flex items-center gap-2 mb-4 border-b border-slate-700 pb-2">
                   <Crown className="w-4 h-4 text-yellow-500" />
@@ -1022,6 +1097,18 @@ export default function App() {
                     className={`w-14 h-8 rounded-full p-1 transition-colors ${settings.showNames ? 'bg-blue-500' : 'bg-slate-700'}`}
                   >
                     <div className={`w-6 h-6 bg-white rounded-full transition-transform ${settings.showNames ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-bold">Music</p>
+                    <p className="text-slate-400 text-xs">Background music</p>
+                  </div>
+                  <button 
+                    onClick={() => setIsMuted(m => !m)}
+                    className={`w-14 h-8 rounded-full p-1 transition-colors ${!isMuted ? 'bg-blue-500' : 'bg-slate-700'}`}
+                  >
+                    <div className={`w-6 h-6 bg-white rounded-full transition-transform ${!isMuted ? 'translate-x-6' : 'translate-x-0'}`} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
