@@ -5,15 +5,17 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette } from 'lucide-react';
+import { Trophy, Zap, Target, Settings, Play, RefreshCw, Crown, Monitor, Smartphone, X, Palette, Globe } from 'lucide-react';
+import { db } from './firebase';
+import { collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 
 // --- Constants & Types ---
 
-const WORLD_SIZE = 5000;
+const WORLD_SIZE = 6000;
 const INITIAL_SNAKE_LENGTH = 10;
 const SEGMENT_DISTANCE = 15;
-const FOOD_COUNT = 1000;
-const BOT_COUNT = 19; // 1 Player + 19 Bots = 20 Players per server
+const FOOD_COUNT = 2000;
+const BOT_COUNT = 29; // 1 Player + 29 Bots = 30 Players per server
 const VIEW_DISTANCE = 800;
 
 interface Point {
@@ -100,8 +102,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : { glow: true, showNames: true };
   });
   
+  const [gameMode, setGameMode] = useState<'practice' | 'online'>('practice');
   const [score, setScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<{ name: string; score: number }[]>([]);
+  const [globalLeaderboard, setGlobalLeaderboard] = useState<{ name: string; score: number }[]>([]);
   const [tick, setTick] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [showCustomization, setShowCustomization] = useState(false);
@@ -121,19 +125,13 @@ export default function App() {
 
   useEffect(() => {
     // Initialize background world
-    let availableNames = BOT_NAMES.filter(name => !previousBotNames.current.has(name));
-    if (availableNames.length < BOT_COUNT) availableNames = [...BOT_NAMES];
-    availableNames.sort(() => Math.random() - 0.5);
-    const selectedNames = availableNames.slice(0, BOT_COUNT);
-    previousBotNames.current = new Set(selectedNames);
-
     const bots: Snake[] = Array.from({ length: BOT_COUNT }, (_, i) => {
       const startX = Math.random() * WORLD_SIZE;
       const startY = Math.random() * WORLD_SIZE;
       const angle = Math.random() * Math.PI * 2;
       return {
         id: `bot-${i}`,
-        name: selectedNames[i] || `Bot ${i}`,
+        name: `Bot ${i + 1}`,
         segments: Array.from({ length: INITIAL_SNAKE_LENGTH }, (_, j) => ({
           x: startX,
           y: startY + j * SEGMENT_DISTANCE
@@ -160,6 +158,21 @@ export default function App() {
 
     snakesRef.current = bots;
     foodRef.current = food;
+    // Fetch Global Leaderboard on mount
+    const fetchLeaderboard = async () => {
+      try {
+        const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
+        const snapshot = await getDocs(q);
+        const topScores = snapshot.docs.map(doc => ({
+          name: doc.data().name,
+          score: doc.data().score
+        }));
+        setGlobalLeaderboard(topScores);
+      } catch (error) {
+        console.error("Error fetching leaderboard:", error);
+      }
+    };
+    fetchLeaderboard();
   }, []);
 
   const initGame = useCallback(() => {
@@ -213,20 +226,36 @@ export default function App() {
           // Only think every X frames (simulates reaction time)
           speed = 2 + Math.random(); // Reset speed
           
-          // 2. Avoid other snakes
+          // 2. Avoid or Attack other snakes
           let avoidanceDx = 0;
           let avoidanceDy = 0;
           let nearThreat = false;
+          let attackTarget = null;
+          let minAttackDistSq = 90000;
 
           snakes.forEach(other => {
             if (other.id === snake.id || other.isDead) return;
+            
+            // If we are significantly bigger, try to attack them (cut them off)
+            if (snake.segments.length > other.segments.length + 5) {
+              const otherHead = other.segments[0];
+              const distSq = getDistanceSq(head, otherHead);
+              if (distSq < 40000 && distSq < minAttackDistSq) { // 200 squared
+                attackTarget = otherHead;
+                minAttackDistSq = distSq;
+              }
+            }
+            
             // Optimization: Only check head and a few segments, use squared distance
             for (let i = 0; i < Math.min(other.segments.length, 10); i += 3) {
               const seg = other.segments[i];
               if (getDistanceSq(head, seg) < 22500) { // 150 squared (increased vision)
-                nearThreat = true;
-                avoidanceDx += head.x - seg.x;
-                avoidanceDy += head.y - seg.y;
+                // Only fear them if they aren't much smaller
+                if (other.segments.length >= snake.segments.length - 5) {
+                  nearThreat = true;
+                  avoidanceDx += head.x - seg.x;
+                  avoidanceDy += head.y - seg.y;
+                }
               }
             }
           });
@@ -235,6 +264,10 @@ export default function App() {
           if (nearThreat && Math.random() > 0.2) {
             targetAngle = Math.atan2(avoidanceDy, avoidanceDx) + (Math.random() - 0.5) * 0.5; // Imperfect turn
             speed = 5; // Boost away
+          } else if (attackTarget && Math.random() > 0.3) {
+            // Aggressive intercept: aim slightly ahead of their head
+            targetAngle = Math.atan2(attackTarget.y - head.y, attackTarget.x - head.x);
+            speed = 5; // Boost to attack
           } else {
             // 3. Seek food
             let closestFood = null;
@@ -280,13 +313,23 @@ export default function App() {
         }
       }
 
-      // Smooth angle transition (increased sensitivity for better response)
+      // Smooth angle transition (slower for larger snakes)
       let angleDiff = snake.targetAngle - snake.angle;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       
-      const turnSpeed = snake.isBot ? 0.1 : 0.25; // Faster turning for player
-      snake.angle += angleDiff * turnSpeed;
+      // Calculate max turn speed based on length (longer = slower)
+      let maxTurnSpeed = 0.15 - (snake.segments.length * 0.0005);
+      maxTurnSpeed = Math.max(0.04, maxTurnSpeed); // Minimum turn speed
+      
+      // Bots turn slightly slower than players to give players an edge
+      const turnSpeed = snake.isBot ? maxTurnSpeed * 0.7 : maxTurnSpeed;
+      
+      // Clamp angle difference to max turn speed
+      if (angleDiff > turnSpeed) angleDiff = turnSpeed;
+      if (angleDiff < -turnSpeed) angleDiff = -turnSpeed;
+      
+      snake.angle += angleDiff;
 
       // Move head
       const head = snake.segments[0];
@@ -396,6 +439,14 @@ export default function App() {
 
             if (snake.id === 'player') {
               setGameState('gameover');
+              // Save score to Firebase if playing online
+              if (gameMode === 'online' && snake.score > 100) {
+                addDoc(collection(db, 'leaderboard'), {
+                  name: snake.name,
+                  score: snake.score,
+                  timestamp: serverTimestamp()
+                }).catch(console.error);
+              }
             }
           }
         });
@@ -775,15 +826,19 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="absolute top-6 left-6 z-10"
             >
-              <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700 p-4 rounded-2xl shadow-2xl">
+              <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700 p-4 rounded-2xl shadow-2xl flex flex-col gap-2">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-blue-500/20 rounded-lg">
                     <Zap className="w-5 h-5 text-blue-400" />
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Score</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Mass</p>
                     <p className="text-2xl font-black text-white tabular-nums">{score}</p>
                   </div>
+                </div>
+                <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1">
+                  {gameMode === 'online' ? <Globe className="w-3 h-3 text-green-400" /> : <Target className="w-3 h-3 text-slate-400" />}
+                  {gameMode === 'online' ? 'Online Server' : 'Practice Mode'}
                 </div>
               </div>
             </motion.div>
@@ -1016,22 +1071,40 @@ export default function App() {
                 </h1>
               </motion.div>
 
-              {/* Play Button */}
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={initGame}
-                className="group relative w-full py-6 bg-blue-600 hover:bg-blue-500 text-white font-black text-2xl rounded-full shadow-[0_0_30px_rgba(37,99,235,0.4)] transition-all duration-300 overflow-hidden mb-4"
-              >
-                <div className="relative z-10 flex items-center justify-center gap-3">
-                  <Play className="w-8 h-8 fill-current" />
-                  PLAY
-                </div>
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-              </motion.button>
+              {/* Play Buttons */}
+              <div className="w-full flex flex-col gap-3 mb-4">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    setGameMode('online');
+                    initGame();
+                  }}
+                  className="group relative w-full py-5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xl rounded-full shadow-[0_0_30px_rgba(37,99,235,0.4)] transition-all duration-300 overflow-hidden"
+                >
+                  <div className="relative z-10 flex items-center justify-center gap-3">
+                    <Crown className="w-6 h-6 fill-current" />
+                    PLAY ONLINE
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                </motion.button>
+
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    setGameMode('practice');
+                    initGame();
+                  }}
+                  className="w-full py-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-lg rounded-full transition-all duration-300 flex items-center justify-center gap-2"
+                >
+                  <Target className="w-5 h-5" />
+                  PRACTICE (BOTS)
+                </motion.button>
+              </div>
 
               {/* Menu Buttons */}
-              <div className="grid grid-cols-2 gap-4 w-full">
+              <div className="grid grid-cols-2 gap-4 w-full mb-8">
                 <button
                   onClick={() => setShowCustomization(true)}
                   className="py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-slate-300 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
@@ -1046,6 +1119,27 @@ export default function App() {
                   <Settings className="w-4 h-4" />
                   Settings
                 </button>
+              </div>
+
+              {/* Global Leaderboard Preview */}
+              <div className="w-full bg-slate-900/50 border border-slate-700 rounded-3xl p-6 shadow-inner">
+                <h3 className="text-white font-black mb-4 flex items-center justify-center gap-2 text-sm uppercase tracking-widest">
+                  <Globe className="w-4 h-4 text-blue-400" /> Global Top 5
+                </h3>
+                {globalLeaderboard.length > 0 ? (
+                  <div className="space-y-3">
+                    {globalLeaderboard.slice(0, 5).map((entry, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-sm bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
+                        <span className="text-white font-bold flex items-center gap-3">
+                          <span className="text-slate-500 w-4">{idx + 1}.</span> {entry.name}
+                        </span>
+                        <span className="font-mono text-blue-400 font-bold">{entry.score}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-slate-500 text-sm py-4">No scores yet. Be the first!</p>
+                )}
               </div>
             </div>
           </motion.div>
