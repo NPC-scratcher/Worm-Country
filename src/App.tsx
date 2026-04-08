@@ -90,6 +90,9 @@ export default function App() {
   const [playerName, setPlayerName] = useState(() => {
     return localStorage.getItem('worm_player_name') || 'Player';
   });
+  const [playerColor, setPlayerColor] = useState(() => {
+    return localStorage.getItem('worm_player_color') || '#3b82f6';
+  });
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('worm_settings');
     return saved ? JSON.parse(saved) : { glow: true, showNames: true };
@@ -165,7 +168,7 @@ export default function App() {
       angle: -Math.PI / 2,
       targetAngle: -Math.PI / 2,
       speed: 3,
-      color: '#3b82f6',
+      color: playerColor,
       score: 0,
       isBot: false,
       isDead: false
@@ -496,11 +499,20 @@ export default function App() {
           const size = 18 * sizeRatio;
 
           // Body segment (Outer)
-          ctx.globalAlpha = settings.glow ? 0.7 : 1.0;
+          if (settings.glow) {
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = snake.color;
+          } else {
+            ctx.shadowBlur = 0;
+          }
+          
+          ctx.globalAlpha = settings.glow ? 0.8 : 1.0;
           ctx.beginPath();
           ctx.arc(screenX, screenY, size, 0, Math.PI * 2);
           ctx.fillStyle = snake.color;
           ctx.fill();
+          
+          ctx.shadowBlur = 0; // Reset for inner details
           
           // Inner shadow/highlight for 3D segmented effect
           ctx.beginPath();
@@ -519,10 +531,10 @@ export default function App() {
           // Speed boost glow
           if (i === 0 && snake.speed > 4 && settings.glow) {
             ctx.beginPath();
-            ctx.arc(screenX, screenY, size * 1.8, 0, Math.PI * 2);
+            ctx.arc(screenX, screenY, size * 1.5, 0, Math.PI * 2);
             ctx.fillStyle = snake.color;
-            ctx.globalAlpha = 0.3;
-            ctx.shadowBlur = 30;
+            ctx.globalAlpha = 0.5;
+            ctx.shadowBlur = 40;
             ctx.shadowColor = snake.color;
             ctx.fill();
             ctx.globalAlpha = 1.0;
@@ -583,6 +595,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('worm_player_name', playerName);
   }, [playerName]);
+
+  useEffect(() => {
+    localStorage.setItem('worm_player_color', playerColor);
+  }, [playerColor]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -890,6 +906,22 @@ export default function App() {
                     <div className={`w-6 h-6 bg-white rounded-full transition-transform ${settings.showNames ? 'translate-x-6' : 'translate-x-0'}`} />
                   </button>
                 </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-bold">Controls</p>
+                    <p className="text-slate-400 text-xs">PC (WASD) or Mobile (Touch)</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const newIsMobile = !isMobile;
+                      setIsMobile(newIsMobile);
+                      localStorage.setItem('worm_device', newIsMobile ? 'mobile' : 'pc');
+                    }}
+                    className="px-4 py-2 bg-slate-800 text-white text-xs font-bold rounded-xl border border-slate-600 hover:bg-slate-700 transition-colors"
+                  >
+                    {isMobile ? 'MOBILE' : 'PC'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -918,15 +950,29 @@ export default function App() {
                 <p className="text-slate-400 font-medium mt-2 tracking-widest uppercase text-xs">The Ultimate Arena</p>
               </motion.div>
 
-              {/* Player Name Input */}
-              <div className="w-full mb-6">
+              {/* Player Name Input & Customization */}
+              <div className="w-full mb-8">
                 <input
                   type="text"
                   value={playerName}
                   onChange={(e) => setPlayerName(e.target.value.slice(0, 15))}
                   placeholder="Enter your name..."
-                  className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl px-6 py-4 text-white text-center font-bold text-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 transition-all shadow-inner"
+                  className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl px-6 py-4 text-white text-center font-bold text-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 transition-all shadow-inner mb-4"
                 />
+                
+                <div className="bg-slate-900/50 border border-slate-700 rounded-2xl p-4">
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest text-center mb-3">Worm Color</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#ffffff'].map(color => (
+                      <button
+                        key={color}
+                        onClick={() => setPlayerColor(color)}
+                        className={`w-8 h-8 rounded-full transition-all ${playerColor === color ? 'scale-125 ring-2 ring-white shadow-[0_0_15px_rgba(255,255,255,0.5)]' : 'hover:scale-110 opacity-70 hover:opacity-100'}`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Play Button */}
